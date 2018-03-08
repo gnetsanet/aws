@@ -19,6 +19,7 @@ from flask_wtf.file import FileField, FileRequired
 
 import config
 import util
+import database
 
 application = Flask(__name__)
 application.secret_key = config.FLASK_SECRET
@@ -37,21 +38,15 @@ def home():
     all_labels = ["No labels yet"]
 
     #####
-    # s3 getting a list of photos in the bucket
+    # rds exercise get list of images from database
     #####
     s3_client = boto3.client('s3')
-    prefix = "photos/"
-    response = s3_client.list_objects(
-        Bucket=config.PHOTOS_BUCKET,
-        Prefix=prefix
-    )
-    photos = []
-    if 'Contents' in response and response['Contents']:
-        photos = [s3_client.generate_presigned_url(
+    photos = database.list_photos()
+    for photo in photos:
+        photo["signed_url"] = s3_client.generate_presigned_url(
             'get_object',
-            Params={'Bucket': config.PHOTOS_BUCKET, 'Key': content['Key']}
-            ) for content in response['Contents']]
-
+            Params={'Bucket': config.PHOTOS_BUCKET, 'Key': photo["object_key"]}
+        )
 
     form = PhotoForm()
     url = None
@@ -61,6 +56,7 @@ def home():
             #######
             # s3 excercise - save the file to a bucket
             #######
+            prefix = "photos/"
             key = prefix + util.random_hex_bytes(8) + '.png'
             s3_client.put_object(
                 Bucket=config.PHOTOS_BUCKET,
@@ -72,6 +68,25 @@ def home():
             url = s3_client.generate_presigned_url(
                 'get_object',
                 Params={'Bucket': config.PHOTOS_BUCKET, 'Key': key})
+
+            #######
+            # rekcognition exercise
+            #######
+            rek = boto3.client('rekognition')
+            response = rek.detect_labels(
+                Image={
+                    'S3Object': {
+                        'Bucket': config.PHOTOS_BUCKET,
+                        'Name': key
+                    }
+                })
+            all_labels = [label['Name'] for label in response['Labels']]
+
+            #######
+            # rds excercise
+            #######
+            labels_comma_separated = ", ".join(all_labels)
+            database.add_photo(key, labels_comma_separated)
 
     return render_template_string("""
             {% extends "main.html" %}
@@ -105,9 +120,15 @@ def home():
             <hr/>
             <h4>Photos</h4>
             {% for photo in photos %}
-                <img width="150" src="{{photo}}" />
+                <table class="table table-bordered">
+                <tr> <td rowspan="4" class="col-md-2 text-center"><img width="150" src="{{photo.signed_url}}" /> </td></tr>
+                <tr> <th scope="row" class="col-md-2">Labels</th> <td>{{photo.labels}}</td> </tr>
+                <tr> <th scope="row" class="col-md-2">Created</th> <td>{{photo.created_datetime}} UTC</td> </tr>
+                </table>
+
             {% endfor %}
             {% endif %}
+
 
             {% endblock %}
                 """, form=form, url=url, photos=photos, all_labels=all_labels)
