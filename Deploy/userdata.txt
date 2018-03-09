@@ -1,5 +1,5 @@
 #!/bin/bash -ex
-bucket=rekpicsdeploy
+bucket=BUCKET_NAME
 
 # install python3.6 and dev tools
 yum -y install python36
